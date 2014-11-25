@@ -683,19 +683,18 @@ function calendar_get_events($tstart, $tend, $users, $groups, $courses, $withdur
     global $DB;
 
     $whereclause = '';
+    $params = array();
     // Quick test
     if(is_bool($users) && is_bool($groups) && is_bool($courses)) {
         return array();
     }
 
-    if(is_array($users) && !empty($users)) {
+    if ((is_array($users) && !empty($users)) or is_numeric($users)) {
         // Events from a number of users
         if(!empty($whereclause)) $whereclause .= ' OR';
-        $whereclause .= ' (userid IN ('.implode(',', $users).') AND courseid = 0 AND groupid = 0)';
-    } else if(is_numeric($users)) {
-        // Events from one user
-        if(!empty($whereclause)) $whereclause .= ' OR';
-        $whereclause .= ' (userid = '.$users.' AND courseid = 0 AND groupid = 0)';
+        list($insqlusers, $inparamsusers) = $DB->get_in_or_equal($users, SQL_PARAMS_NAMED);
+        $whereclause .= " (userid $insqlusers AND courseid = 0 AND groupid = 0)";
+        $params = array_merge($params, $inparamsusers);
     } else if($users === true) {
         // Events from ALL users
         if(!empty($whereclause)) $whereclause .= ' OR';
@@ -704,14 +703,12 @@ function calendar_get_events($tstart, $tend, $users, $groups, $courses, $withdur
         // No user at all, do nothing
     }
 
-    if(is_array($groups) && !empty($groups)) {
+    if ((is_array($groups) && !empty($groups)) or is_numeric($groups)) {
         // Events from a number of groups
         if(!empty($whereclause)) $whereclause .= ' OR';
-        $whereclause .= ' groupid IN ('.implode(',', $groups).')';
-    } else if(is_numeric($groups)) {
-        // Events from one group
-        if(!empty($whereclause)) $whereclause .= ' OR ';
-        $whereclause .= ' groupid = '.$groups;
+        list($insqlgroups, $inparamsgroups) = $DB->get_in_or_equal($groups, SQL_PARAMS_NAMED);
+        $whereclause .= " groupid $insqlgroups ";
+        $params = array_merge($params, $inparamsgroups);
     } else if($groups === true) {
         // Events from ALL groups
         if(!empty($whereclause)) $whereclause .= ' OR ';
@@ -719,15 +716,11 @@ function calendar_get_events($tstart, $tend, $users, $groups, $courses, $withdur
     }
     // boolean false (no groups at all): we don't need to do anything
 
-    if(is_array($courses) && !empty($courses)) {
-        if(!empty($whereclause)) {
-            $whereclause .= ' OR';
-        }
-        $whereclause .= ' (groupid = 0 AND courseid IN ('.implode(',', $courses).'))';
-    } else if(is_numeric($courses)) {
-        // One course
+    if ((is_array($courses) && !empty($courses)) or is_numeric($courses)) {
         if(!empty($whereclause)) $whereclause .= ' OR';
-        $whereclause .= ' (groupid = 0 AND courseid = '.$courses.')';
+        list($insqlcourses, $inparamscourses) = $DB->get_in_or_equal($courses, SQL_PARAMS_NAMED);
+        $whereclause .= " (groupid = 0 AND courseid $insqlcourses)";
+        $params = array_merge($params, $inparamscourses);
     } else if ($courses === true) {
         // Events from ALL courses
         if(!empty($whereclause)) $whereclause .= ' OR';
@@ -761,7 +754,7 @@ function calendar_get_events($tstart, $tend, $users, $groups, $courses, $withdur
         $whereclause .= ' AND visible = 1';
     }
 
-    $events = $DB->get_records_select('event', $whereclause, null, 'timestart');
+    $events = $DB->get_records_select('event', $whereclause, $params, 'timestart');
     if ($events === false) {
         $events = array();
     }
@@ -1898,6 +1891,51 @@ function calendar_add_event_allowed($event) {
 }
 
 /**
+ * Convert region timezone to php supported timezone
+ *
+ * @param string $tz value from ical file
+ * @return string $tz php supported timezone
+ */
+function calendar_normalize_tz($tz) {
+    switch ($tz) {
+        case('CST'):
+        case('Central Time'):
+        case('Central Standard Time'):
+            $tz = 'America/Chicago';
+            break;
+        case('CET'):
+        case('Central European Time'):
+            $tz = 'Europe/Berlin';
+            break;
+        case('EST'):
+        case('Eastern Time'):
+        case('Eastern Standard Time'):
+            $tz = 'America/New_York';
+            break;
+        case('PST'):
+        case('Pacific Time'):
+        case('Pacific Standard Time'):
+            $tz = 'America/Los_Angeles';
+            break;
+        case('China Time'):
+        case('China Standard Time'):
+            $tz = 'Asia/Beijing';
+            break;
+        case('IST'):
+        case('India Time'):
+        case('India Standard Time'):
+            $tz = 'Asia/New_Delhi';
+            break;
+        case('JST');
+        case('Japan Time'):
+        case('Japan Standard Time'):
+            $tz = 'Asia/Tokyo';
+            break;
+    }
+    return $tz;
+}
+
+/**
  * Manage calendar events
  *
  * This class provides the required functionality in order to manage calendar events.
@@ -2926,6 +2964,7 @@ function calendar_add_icalendar_event($event, $courseid, $subscriptionid, $timez
     $defaulttz = date_default_timezone_get();
     $tz = isset($event->properties['DTSTART'][0]->parameters['TZID']) ? $event->properties['DTSTART'][0]->parameters['TZID'] :
             $timezone;
+    $tz = calendar_normalize_tz($tz);
     $eventrecord->timestart = strtotime($event->properties['DTSTART'][0]->value . ' ' . $tz);
     if (empty($event->properties['DTEND'])) {
         $eventrecord->timeduration = 0; // no duration if no end time specified
@@ -3072,7 +3111,9 @@ function calendar_import_icalendar_events($ical, $courseid, $subscriptionid = nu
     $updatecount = 0;
 
     // Large calendars take a while...
-    core_php_time_limit::raise(300);
+    if (!CLI_SCRIPT) {
+        core_php_time_limit::raise(300);
+    }
 
     // Mark all events in a subscription with a zero timestamp.
     if (!empty($subscriptionid)) {

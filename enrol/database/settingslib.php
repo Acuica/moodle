@@ -15,17 +15,32 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Strings for component 'atto_title', language 'en'.
+ * Database enrolment plugin custom settings.
  *
- * @package    atto_title
- * @copyright  2013 Damyon Wiese  <damyon@moodle.com>
+ * @package    enrol_database
+ * @copyright  2013 Darko Miletic
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
-$string['h3'] = 'Heading (large)';
-$string['h4'] = 'Heading (medium)';
-$string['h5'] = 'Heading (small)';
-$string['p'] = 'Paragraph';
-$string['pluginname'] = 'Paragraph styles';
-$string['pre'] = 'Pre-formatted';
-$string['title'] = 'Paragraph styles';
+defined('MOODLE_INTERNAL') || die();
+
+/**
+ * Class implements new specialized setting for course categories that are loaded
+ * only when required
+ * @author Darko Miletic
+ *
+ */
+class enrol_database_admin_setting_category extends admin_setting_configselect {
+    public function __construct($name, $visiblename, $description) {
+        parent::__construct($name, $visiblename, $description, 1, null);
+    }
+
+    public function load_choices() {
+        if (is_array($this->choices)) {
+            return true;
+        }
+
+        $this->choices = make_categories_options();
+        return true;
+    }
+}
